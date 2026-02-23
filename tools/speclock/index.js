@@ -44,7 +44,7 @@ function validate() {
 }
 
 function changedFiles(base, head) {
-  const out = execSync(`git diff --name-only ${base} ${head}`, { encoding: "utf8" });
+  const out = execSync(`git diff --name-only --merge-base ${base} ${head}`, { encoding: "utf8" });
   return out.split("\n").map(s => s.trim().replace(/\\/g, "/")).filter(Boolean);
 }
 
