@@ -1,6 +1,6 @@
-- 👋 Hi, I’m @Laughterjazz001
+- 👋 Hi, I’m @Laughter
 - 👀 I’m interested in Tech
-- 🌱 I’m currently learning Java
+- 🌱 I’m currently learning 
 - 💞️ I’m looking to collaborate on any project
 - 📫 How to reach me... Dont try I will
 <!---
