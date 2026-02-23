@@ -1,0 +1,12 @@
+﻿{
+  "name": "laughterjazz001",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "speclock:validate": "node tools/speclock/index.js validate",
+    "speclock:drift": "node tools/speclock/index.js drift"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1"
+  }
+}
