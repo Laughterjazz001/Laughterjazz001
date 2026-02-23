@@ -72,8 +72,14 @@ function drift(base, head) {
     process.exit(1);
   }
 
-  if (hits.length === 0) console.log("No drift rules triggered.");
-  else console.log("Drift check passed (spec updated).");
+  if (hits.length === 0) { 
+    console.log("No drift rules triggered.");
+  } else if (specChanged) {
+    console.log("Drift check passed: guarded changes present and spec was updated.");
+  } else {
+    // unreachable due to earlier exit, but kept for clarity
+    console.log("Drift check failed: guarded changes present and spec was not updated.");
+  }
 }
 
 function main() {
