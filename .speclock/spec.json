@@ -1,10 +1,24 @@
 {
   "version": "0",
-  "service": { "name": "Laughterjazz001", "summary": "Repo guarded by SpecLock v0." },
-  "owners": [{ "name": "Owner", "contact": "replace-me@example.com" }],
-  "objectives": ["Require explicit spec updates when guarded files change."],
-  "nonGoals": ["Semantic understanding of changes in v0."],
-  "constraints": ["Rules-based drift only."],
+  "service": {
+    "name": "Laughterjazz001",
+    "summary": "Repo guarded by SpecLock v0."
+  },
+  "owners": [
+    {
+      "name": "Owner",
+      "contact": "replace-me@example.com"
+    }
+  ],
+  "objectives": [
+    "Require explicit spec updates when guarded files change."
+  ],
+  "nonGoals": [
+    "Semantic understanding of changes in v0."
+  ],
+  "constraints": [
+    "Rules-based drift only."
+  ],
   "changePolicy": {
     "requiresSpecUpdateFor": [
       "package.json",
