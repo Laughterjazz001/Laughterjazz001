@@ -7,6 +7,28 @@ const Ajv = require("ajv");
 const SPEC_FILE = ".speclock/spec.json";
 const SCHEMA_FILE = ".speclock/schema.json";
 
+// ---- helpers ----
+function normalize(p) {
+  return String(p || "").trim().replace(/\\/g, "/");
+}
+
+function readJson(relPath) {
+  const abs = path.join(process.cwd(), relPath);
+
+  if (!fs.existsSync(abs)) {
+    console.error(`Missing ${relPath}`);
+    process.exit(1);
+  }
+
+  try {
+    const raw = fs.readFileSync(abs, "utf8").replace(/^\uFEFF/, ""); // strip BOM
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error(`Invalid JSON in ${relPath}: ${e.message}`);
+    process.exit(1);
+  }
+}
+
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
@@ -15,21 +37,72 @@ function parseArgs(argv) {
     const k = a.slice(2);
     const v = argv[i + 1];
     if (!v || v.startsWith("--")) out[k] = true;
-    else { out[k] = v; i++; }
+    else {
+      out[k] = v;
+      i++;
+    }
   }
   return out;
 }
 
+// Minimal glob -> RegExp supporting: *, **, ?
+function globToRegExp(glob) {
+  const g = normalize(glob);
+  let re = "^";
+  let i = 0;
+
+  while (i < g.length) {
+    const c = g[i];
+
+    if (c === "*") {
+      // ** or *
+      if (g[i + 1] === "*") {
+        i += 2;
+        // if **/ then match any dirs (including none)
+        if (g[i] === "/") {
+          i += 1;
+          re += "(?:.*\\/)?";
+        } else {
+          re += ".*";
+        }
+      } else {
+        i += 1;
+        re += "[^/]*";
+      }
+      continue;
+    }
+
+    if (c === "?") {
+      i += 1;
+      re += "[^/]";
+      continue;
+    }
+
+    // escape regex special chars
+    if ("\\.[]{}()+-^$|".includes(c)) {
+      re += "\\";
+    }
+    re += c;
+    i += 1;
+  }
+
+  re += "$";
+  return new RegExp(re);
+}
+
+function getChangedFiles(base, head) {
+  const cmd = `git diff --name-only --merge-base ${base} ${head}`;
+  const out = execSync(cmd, { encoding: "utf8" });
+  return out
+    .split("\n")
+    .map((s) => normalize(s))
+    .filter(Boolean);
+}
+
+// ---- commands ----
 function validate() {
-  const root = process.cwd();
-  const schemaPath = path.join(root, SCHEMA_FILE);
-  const specPath = path.join(root, SPEC_FILE);
-
-  if (!fs.existsSync(schemaPath)) { console.error("Missing " + SCHEMA_FILE); process.exit(1); }
-  if (!fs.existsSync(specPath)) { console.error("Missing " + SPEC_FILE); process.exit(1); }
-
-  const schema = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
-  const spec = JSON.parse(fs.readFileSync(specPath, "utf8"));
+  const schema = readJson(SCHEMA_FILE);
+  const spec = readJson(SPEC_FILE);
 
   const ajv = new Ajv({ allErrors: true, strict: false });
   const fn = ajv.compile(schema);
@@ -37,60 +110,89 @@ function validate() {
 
   if (!ok) {
     console.error("Spec validation failed:");
-    for (const e of fn.errors || []) console.error(" - " + (e.instancePath || "/") + " " + (e.message || "invalid"));
+    for (const e of fn.errors || []) {
+      console.error(` - ${(e.instancePath || "/")} ${e.message || "invalid"}`);
+    }
     process.exit(1);
   }
+
   console.log("Spec valid.");
 }
 
-function changedFiles(base, head) {
-  const out = execSync(`git diff --name-only --merge-base ${base} ${head}`, { encoding: "utf8" });
-  return out.split("\n").map(s => s.trim().replace(/\\/g, "/")).filter(Boolean);
-}
-
 function drift(base, head) {
-  const files = changedFiles(base, head);
-  const specChanged = files.includes(SPEC_FILE);
+  const files = getChangedFiles(base, head);
+  const specChanged = files.includes(normalize(SPEC_FILE));
 
-  const hits = [];
-  const hit = (desc, pred) => { if (files.some(pred)) hits.push(desc); };
+  // Prefer config from spec.json, but keep safe defaults
+  const spec = readJson(SPEC_FILE);
+  const configured =
+    spec &&
+    spec.changePolicy &&
+    Array.isArray(spec.changePolicy.requiresSpecUpdateFor)
+      ? spec.changePolicy.requiresSpecUpdateFor.map(normalize).filter(Boolean)
+      : [];
 
-  hit("package.json changed", f => f === "package.json");
-  hit("composer deps changed", f => f === "composer.json" || f === "composer.lock");
-  hit("database migrations changed", f => f.startsWith("database/migrations/"));
-  hit("routes changed", f => f.startsWith("routes/"));
-  hit("module migrations changed", f => f.startsWith("Modules/") && f.includes("/Database/Migrations/"));
-  hit("module routes changed", f => f.startsWith("Modules/") && f.includes("/Routes/"));
+  const defaults = [
+    "package.json",
+    "package-lock.json",
+    "composer.json",
+    "composer.lock",
+    "database/migrations/**",
+    "routes/**",
+    "Modules/**/Database/Migrations/**",
+    "Modules/**/Routes/**"
+  ];
 
-  if (hits.length > 0 && !specChanged) {
-    console.error("Drift detected: guarded files changed but .speclock/spec.json was not updated.");
-    console.error(`Compared: ${base}..${head}`);
+  const patterns = configured.length ? configured : defaults;
+  const compiled = patterns.map((p) => ({ pattern: p, re: globToRegExp(p) }));
+
+  // Collect matches per pattern
+  const matched = [];
+  for (const c of compiled) {
+    const hitFiles = files.filter((f) => c.re.test(f));
+    if (hitFiles.length) matched.push({ pattern: c.pattern, files: hitFiles });
+  }
+
+  if (matched.length > 0 && !specChanged) {
+    console.error("❌ Drift detected.");
+    console.error("You changed guarded files but did NOT update .speclock/spec.json.");
+    console.error(`Compared (merge-base): ${base}..${head}`);
+    console.error("");
     console.error("Triggered rules:");
-    hits.forEach(h => console.error(" - " + h));
-    console.error("Changed files:");
-    files.forEach(f => console.error(" - " + f));
+    for (const m of matched) {
+      console.error(` - ${m.pattern}`);
+      for (const f of m.files) console.error(`    • ${f}`);
+    }
+    console.error("");
+    console.error("Fix: update .speclock/spec.json to reflect the intent of this change, then commit + push.");
     process.exit(1);
   }
 
-  if (hits.length === 0) { 
-    console.log("No drift rules triggered.");
-  } else if (specChanged) {
-    console.log("Drift check passed: guarded changes present and spec was updated.");
-  } else {
-    // unreachable due to earlier exit, but kept for clarity
-    console.log("Drift check failed: guarded changes present and spec was not updated.");
+  if (matched.length === 0) {
+    console.log("✅ No drift rules triggered.");
+    return;
   }
+
+  console.log("✅ Drift check passed: guarded changes present and spec was updated.");
 }
 
 function main() {
   const [, , cmd, ...rest] = process.argv;
+
   if (cmd === "validate") return validate();
+
   if (cmd === "drift") {
     const args = parseArgs(rest);
-    if (!args.base || !args.head) { console.error("Usage: drift --base <sha> --head <sha>"); process.exit(1); }
+    if (!args.base || !args.head) {
+      console.error("Usage: drift --base <ref> --head <ref>");
+      console.error('Example: node tools/speclock/index.js drift --base origin/main --head HEAD');
+      process.exit(1);
+    }
     return drift(args.base, args.head);
   }
+
   console.error("Usage: validate | drift");
   process.exit(1);
 }
+
 main();
