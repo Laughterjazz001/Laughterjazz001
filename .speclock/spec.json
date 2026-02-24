@@ -17,8 +17,7 @@
     "Semantic understanding of changes in v0."
   ],
   "constraints": [
-    "Rules-based drift only.",
-    "Spec updated because package.json changed (test)"
+    "Rules-based drift only."
   ],
   "changePolicy": {
     "requiresSpecUpdateFor": [

@@ -8,6 +8,5 @@
   },
   "dependencies": {
     "ajv": "^8.17.1"
-  },
-  "testNote": "speclock drift test"
+  }
 }
